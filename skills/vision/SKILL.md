@@ -1,105 +1,120 @@
 ---
 name: vision
 description: >
-  Analyzes images using free vision-capable models via OpenRouter. Use whenever
-  the conversation contains an image (local file path, URL, or data URI) and
-  the current model cannot see images. Reads Pi config for API key. Agent must
-  pass --model explicitly. Priority: (1) Pi-enabled vision models,
-  (2) nvidia/nemotron-nano-12b-v2-vl:free, (3) other free models.
-  All models used are FREE (zero cost).
+  Analyzes images using vision-capable models. Use whenever the conversation
+  contains an image (local file path, URL, or data URI) and the current model
+  cannot see images. The agent should read Pi's enabled models, check if any
+  support vision, prefer free models, and ask the user before using paid ones.
 ---
 
 # Vision Skill
 
-Enables Pi to "see" images by sending them to a free vision model.
-`vision.py` is a **thin API client** — it needs `--model` and `--api-key`.
-Model selection logic is in this file (the agent decides).
+Enables Pi to "see" images by delegating to a vision-capable model.
+`vision.py` is a thin API client — **the agent decides which model to use**.
 
 ## How to Use
 
 When the user shares an image (file path, URL, or data URI):
 
-### Step 1: Get API key
+### 1. Get the API key
 
-Read Pi's auth config:
+Read from Pi's auth file:
 ```bash
 python3 -c "
 import json
 auth = json.load(open('$HOME/.pi/agent/auth.json'))
-print(auth.get('openrouter', {}).get('key', ''))
+# Prefer openrouter, fallback to deepseek, kimi
+for p in ('openrouter', 'deepseek', 'kimi-coding'):
+    key = auth.get(p, {}).get('key', '')
+    if key: print(key); break
 "
 ```
 
-If the above returns empty, try `deepseek` or `kimi-coding` providers.
+### 2. Figure out which models Pi has enabled
 
-### Step 2: Pick a model
+Read `~/.pi/agent/settings.json` → `enabledModels`.
 
-**Priority order** (try in this sequence):
+Example models that **support vision** (free):
+- `nvidia/nemotron-nano-12b-v2-vl:free` — ✅ most reliable
+- `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` — ⚠️ sometimes returns None
+- `openrouter/free` — ✅ free routing
+- `google/gemma-4-26b-a4b-it:free` — ⚠️ rate-limited/region-blocked
+- `google/gemma-4-31b-it:free` — ⚠️ rate-limited
+- `google/gemma-3-27b-it:free` — ❌ region-blocked (China)
+- `baidu/qianfan-ocr-fast:free` — ✅ OCR-specific
 
-| Priority | Model | Notes |
-|----------|-------|-------|
-| 1st | Pi's enabled models that support vision | Check `~/.pi/agent/settings.json` → `enabledModels` |
-| 2nd | `nvidia/nemotron-nano-12b-v2-vl:free` | ✅ Most reliable free vision model |
-| 3rd | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` | ❓ Sometimes returns None |
-| 4th | `openrouter/free` | Routes to available free model |
-| 5th | `google/gemma-4-26b-a4b-it:free` | ❗ May be rate-limited or region-blocked |
+**Paid models** (check the user before using):
+- `openai/gpt-4o` — vision capable, paid
+- `anthropic/claude-3.5-sonnet` — vision capable, paid
+- `google/gemini-pro-vision` — paid
 
-> **Important**: If a model returns "None", empty, or an error → skip it and try the next one.
+### 3. Decide which model to use
 
-### Step 3: Run the analysis
+The agent should:
+1. **Check Pi's enabled models** — if any support vision and are free, use them
+2. **If none enabled**, use the recommended free models from the list above
+3. **If only paid models are available**, ask the user before proceeding:
+   > "这个模型需要付费（xxx），要用吗？"
+
+To check if a model supports vision, you can:
+- Look at the model ID: if it contains `vision`, `vl`, `omni`, etc., it likely does
+- Or call the vision.py with it — if it returns None/empty, it doesn't
+- Or check OpenRouter's model list: `curl -s "https://openrouter.ai/api/v1/models" | python3 -c "import json,sys; [print(m['id']) for m in json.load(sys.stdin)['data'] if 'image' in m.get('architecture',{}).get('modality','') and ':free' in m['id']]"`
+
+To check if a model is **free**: model ID ends with `:free`.
+To check if a model is **paid**: no `:free` suffix → ask user.
+
+### 4. Run the analysis
 
 ```bash
 python3 <SKILL_DIR>/vision.py \
   --model <SELECTED_MODEL> \
   --api-key <API_KEY> \
-  --prompt "请描述这张图片的详细内容" \
+  --prompt "Describe this image" \
   <IMAGE_PATH_OR_URL>
 ```
 
-Use the prompt in the user's language. If the user asks a specific question,
-pass it as `--prompt`.
+- Use the user's language for the prompt
+- If the user asked a specific question, pass it as `--prompt`
+- If the model returns None/empty → try a different model
+- If HTTP 429 (rate limited) → try a different model
+- If HTTP 400 with "location" → skip all models from that provider
 
 ## Usage Examples
 
-### Basic description
 ```bash
+# Get the API key
 API_KEY=$(python3 -c "import json; print(json.load(open('$HOME/.pi/agent/auth.json'))['openrouter']['key'])")
 
+# Analyze with a free model
 python3 <SKILL_DIR>/vision.py \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   --api-key "$API_KEY" \
   /tmp/screenshot.png
-```
 
-### With a specific question
-```bash
+# Ask a specific question
 python3 <SKILL_DIR>/vision.py \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   --api-key "$API_KEY" \
-  --prompt "What programming language? Explain the code." \
-  /tmp/screenshot.png
-```
+  --prompt "这段代码有什么bug？" \
+  /tmp/code.png
 
-### Image from URL
-```bash
+# Image from URL
 python3 <SKILL_DIR>/vision.py \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   --api-key "$API_KEY" \
   https://example.com/diagram.png
 ```
 
-## Error Handling
+## OpenRouter Free Models Reference
 
-| Symptom | Likely cause | What to do |
-|---------|-------------|------------|
-| HTTP 429 | Rate limited | Skip this model, try next in priority |
-| HTTP 400 "location" | Region blocked | Skip all models from same provider |
-| "null"/"None" returned | Model doesn't support vision | Skip, try next model |
-| Connection error | Network issue | Retry once, or report to user |
-
-## Notes
-
-- All models used are **free** on OpenRouter
-- The script only needs Python stdlib — no pip install
-- Image is sent as base64 (not uploaded)
-- For large images, consider checking file size first (< 10MB)
+You can check the latest list of free vision models at any time:
+```bash
+python3 -c "
+import json, urllib.request
+d = json.load(urllib.request.urlopen('https://openrouter.ai/api/v1/models'))
+for m in d['data']:
+    if 'image' in m.get('architecture',{}).get('modality','') and ':free' in m['id']:
+        print(m['id'])
+"
+```
