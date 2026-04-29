@@ -3,13 +3,11 @@
 Vision API client for Pi — sends an image to a vision model and returns text.
 
 Auto-detects Pi config for API key.
-Has a default model with automatic fallback on failure.
-Agent can override with --model.
+Agent selects the model (see SKILL.md).
 
 Usage:
-  python3 vision.py image.png
-  python3 vision.py --model some/model:free image.png
-  python3 vision.py --model some/model --api-key KEY image.png
+  python3 vision.py --model nvidia/nemotron-nano-12b-v2-vl:free image.png
+  python3 vision.py --model openai/gpt-4o --prompt "What's in this?" https://...
 """
 
 import argparse
@@ -22,19 +20,6 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-
-
-# ── Default Model Priority ─────────────────────────────────────────────────
-# Tried in order: if one fails (timeout, 429, null), the next is tried.
-# These are free vision models on OpenRouter.
-DEFAULT_MODELS = [
-    "nvidia/nemotron-nano-12b-v2-vl:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "google/gemma-3-27b-it:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "google/gemma-4-31b-it:free",
-    "baidu/qianfan-ocr-fast:free",
-]
 
 
 # ── Image Loading ──────────────────────────────────────────────────────────
@@ -70,15 +55,15 @@ def load_image(path: str) -> dict:
 # ── Pi Config Reader ───────────────────────────────────────────────────────
 
 def find_api_key(provided_key: str | None = None) -> str | None:
-    """Find API key in order: provided arg > env vars > Pi auth file."""
+    """Find API key: arg > env var > Pi auth file."""
     if provided_key:
         return provided_key
 
-    provided_key = os.environ.get("VISION_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
-    if provided_key:
-        return provided_key
+    for var in ("VISION_API_KEY", "OPENROUTER_API_KEY"):
+        val = os.environ.get(var)
+        if val:
+            return val
 
-    # Try Pi's auth.json
     auth_path = os.path.expanduser("~/.pi/agent/auth.json")
     try:
         with open(auth_path) as f:
@@ -102,9 +87,8 @@ def call_vision_api(
     api_key: str,
     api_url: str,
     max_tokens: int = 1024,
-    timeout: int = 120,
 ) -> str:
-    """Send image + prompt to a vision model. Returns the text response."""
+    """Send image + prompt to a vision model. Returns text or exits on error."""
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -126,34 +110,41 @@ def call_vision_api(
     req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             result = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        return {"error": f"HTTP {e.code}", "detail": body[:500], "model": model}
+        print(f"[vision] HTTP {e.code} error from {model}:", file=sys.stderr)
+        print(f"  {body[:500]}", file=sys.stderr)
+        sys.exit(1)
     except urllib.error.URLError as e:
-        return {"error": "network", "detail": str(e.reason), "model": model}
-    except TimeoutError:
-        return {"error": "timeout", "detail": "Request timed out", "model": model}
+        print(f"[vision] Network error: {e.reason}", file=sys.stderr)
+        sys.exit(1)
     except json.JSONDecodeError as e:
-        return {"error": "bad_response", "detail": str(e), "model": model}
+        print(f"[vision] Invalid JSON response: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Extract response text
     try:
         content = result["choices"][0]["message"]["content"]
     except (KeyError, IndexError):
-        return {"error": "unexpected_format", "detail": json.dumps(result, indent=2)[:500], "model": model}
+        print(f"[vision] Unexpected response format:", file=sys.stderr)
+        print(f"  {json.dumps(result, indent=2)[:500]}", file=sys.stderr)
+        sys.exit(1)
 
     # Validate content
     if content is None:
-        return {"error": "null_content", "detail": "Model returned null — may not support vision", "model": model}
+        print(f"[vision] Model returned null — it may not support vision.", file=sys.stderr)
+        sys.exit(1)
     stripped = content.strip()
     if not stripped:
-        return {"error": "empty_content", "detail": "Model returned empty response", "model": model}
+        print(f"[vision] Model returned empty response.", file=sys.stderr)
+        sys.exit(1)
     if stripped.lower() in ("none", "null", "undefined"):
-        return {"error": "null_content", "detail": f"Model returned '{stripped}'", "model": model}
+        print(f"[vision] Model returned '{stripped}' — it may not support vision.", file=sys.stderr)
+        sys.exit(1)
 
-    return {"success": content, "model": model}
+    return content
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
@@ -163,20 +154,18 @@ def main():
         description="Send an image to a vision model and get a text description.",
     )
     parser.add_argument("image", help="Local image path, URL, or base64 data URI")
-    parser.add_argument("-m", "--model", default=None,
-                        help="Vision model ID (default: auto-fallback through free models)")
+    parser.add_argument("-m", "--model", required=True,
+                        help="Vision model ID (e.g. nvidia/nemotron-nano-12b-v2-vl:free)")
     parser.add_argument("-p", "--prompt",
                         default="Please describe this image in detail.",
                         help="Prompt or question about the image")
     parser.add_argument("--api-key", default=None,
-                        help="API key (default: auto-detect from Pi config / env)")
+                        help="Override API key (default: auto-detect from Pi config / env)")
     parser.add_argument("--api-url",
                         default="https://openrouter.ai/api/v1/chat/completions",
                         help="API endpoint URL (default: OpenRouter)")
     parser.add_argument("--max-tokens", type=int, default=1024,
                         help="Maximum tokens in response (default: 1024)")
-    parser.add_argument("--timeout", type=int, default=120,
-                        help="Timeout per model attempt in seconds (default: 120)")
 
     args = parser.parse_args()
 
@@ -194,59 +183,16 @@ def main():
         print(f"[vision] Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Determine which models to try
-    models_to_try = [args.model] if args.model else DEFAULT_MODELS
-
-    last_error = None
-    for model in models_to_try:
-        print(f"[vision] Trying {model} ...", file=sys.stderr)
-
-        result = call_vision_api(
-            image_data=image_data,
-            prompt=args.prompt,
-            model=model,
-            api_key=api_key,
-            api_url=args.api_url,
-            max_tokens=args.max_tokens,
-            timeout=args.timeout,
-        )
-
-        if "success" in result:
-            print(result["success"])
-            return  # success
-
-        last_error = result
-        err_type = result.get("error", "unknown")
-        detail = result.get("detail", "")
-
-        # Skip 400 with "location" — provider doesn't support the model
-        if err_type == "HTTP 400" and "location" in detail.lower():
-            print(f"[vision]  {model} — provider-side error, skipping", file=sys.stderr)
-        # Skip 429 — rate limited
-        elif err_type == "HTTP 429":
-            print(f"[vision]  {model} — rate limited, skipping", file=sys.stderr)
-        # Skip null/empty — not a vision model
-        elif err_type in ("null_content", "empty_content"):
-            print(f"[vision]  {model} — not a vision model, skipping", file=sys.stderr)
-        # Timeout
-        elif err_type == "timeout":
-            print(f"[vision]  {model} — timed out, skipping", file=sys.stderr)
-        # Other HTTP errors
-        elif err_type.startswith("HTTP "):
-            code = err_type.split()[1]
-            print(f"[vision]  {model} — HTTP {code}, skipping", file=sys.stderr)
-        # Network / unexpected
-        else:
-            print(f"[vision]  {model} — {err_type}, skipping", file=sys.stderr)
-
-    # All models failed
-    if last_error:
-        last_model = last_error.get("model", "?")
-        print(f"[vision] All models failed. Last ({last_model}): {last_error.get('error', '?')}",
-              file=sys.stderr)
-    else:
-        print("[vision] No models available to try.", file=sys.stderr)
-    sys.exit(1)
+    # Call API
+    result = call_vision_api(
+        image_data=image_data,
+        prompt=args.prompt,
+        model=args.model,
+        api_key=api_key,
+        api_url=args.api_url,
+        max_tokens=args.max_tokens,
+    )
+    print(result)
 
 
 if __name__ == "__main__":
