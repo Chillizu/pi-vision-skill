@@ -3,8 +3,7 @@ name: vision
 description: >
   Analyzes images using vision-capable models. Use whenever the conversation
   contains an image (local file path, URL, or data URI) and the current model
-  cannot see images. The agent should read Pi's enabled models, check if any
-  support vision, prefer free models, and ask the user before using paid ones.
+  cannot see images.
 ---
 
 # Vision Skill
@@ -16,66 +15,84 @@ the API key from Pi's config — **the agent decides which model to use**.
 
 When the user shares an image (file path, URL, or data URI):
 
-### 1. Figure out which models Pi has enabled
+### 1. Check Pi's enabled models for vision support
 
 Read `~/.pi/agent/settings.json` → `enabledModels`.
 
-Reference: free vision models on OpenRouter (all may or may not work depending
-on region/availability):
-- `nvidia/nemotron-nano-12b-v2-vl:free`
-- `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
-- `google/gemma-4-26b-a4b-it:free`
-- `google/gemma-4-31b-it:free`
-- `google/gemma-3-27b-it:free`
-- `baidu/qianfan-ocr-fast:free`
+Look for model IDs containing **vision-related keywords** (in order of reliability):
+- `vl` — most common indicator (e.g. `nemotron-nano-12b-v2-vl`)
+- `vision` — explicit (e.g. `gemini-pro-vision`)
+- `omni` — multimodal (e.g. `nemotron-3-nano-omni`)
+- `ocr` — text extraction (e.g. `qianfan-ocr-fast`)
 
-To check a model is **free**: model ID ends with `:free`.
-To check if a model supports vision, you can:
-- Look at the model ID: if it contains `vision`, `vl`, `omni`, etc., it likely does
-- Or call vision.py with it — if it returns None/empty, it doesn't
-- Or check OpenRouter's model list:
-  ```bash
-  curl -s "https://openrouter.ai/api/v1/models" | python3 -c "
-  import json,sys
-  d = json.load(sys.stdin)
-  for m in d['data']:
-      if 'image' in m.get('architecture',{}).get('modality','') and ':free' in m['id']:
-          print(m['id'])
-  "
-  ```
+If any of Pi's enabled models match these keywords → use that model directly.
 
-### 2. Decide which model to use
+### 2. Fallback: use the recommended list (priority order)
 
-1. **Check Pi's enabled models** — if any support vision and are free, use them
-2. **If none enabled**, use the recommended free models from the list above
-3. **If only paid models** (no `:free` suffix), ask the user before proceeding:
-   > "这个模型需要付费（xxx），要用吗？"
+If none of Pi's enabled models support vision, try these in **this exact order**.
+Earlier models are more likely to work:
 
-### 3. Run the analysis
+| Priority | Model ID | Why |
+|----------|----------|-----|
+| 🥇 1st | `nvidia/nemotron-nano-12b-v2-vl:free` | Has `vl`, tested reliable |
+| 🥇 2nd | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` | Has `omni` (multimodal) |
+| 3rd | `baidu/qianfan-ocr-fast:free` | Has `ocr` (image input) |
+| 4th | `google/gemma-4-26b-a4b-it:free` | May support images |
+| 5th | `google/gemma-4-31b-it:free` | May support images |
+| 6th | `google/gemma-3-27b-it:free` | May or may not support images |
+
+**Do not try models without vision keywords first** — they will waste a call and return null.
+
+### 3. Paid model guard
+
+If all free models failed and you want to try a paid one (no `:free` suffix),
+ask the user first:
+> "免费模型都失败了，试试付费模型 xxx 吗？"
+
+### 4. Run the analysis
 
 ```bash
-node <SKILL_DIR>/vision.mjs --model <SELECTED_MODEL> <IMAGE_PATH_OR_URL>
+node <SKILL_DIR>/vision.mjs --model <MODEL_ID> <IMAGE>
 ```
 
-- Use the user's language for the prompt (optional `--prompt "..."`)
-- If the user asked a specific question, pass it as `--prompt`
+- Use the user's language for `--prompt` (optional, defaults to English)
+- If the user asked a specific question, pass it as `--prompt "..."`
 
-### 4. Handle failure
+### 5. Handle failure
 
-- If the model returns None/empty → **not a vision model**, try another
-- If HTTP 429 (rate limited) → try another model
-- If HTTP 400 with "location" → skip all models from that provider
-- If timed out → bash may need a longer timeout (try `timeout 120`)
+| Error | Meaning | Action |
+|-------|---------|--------|
+| null / empty / "none" | **Not a vision model** | Skip, try next |
+| HTTP 429 | Rate limited | Skip, try next |
+| HTTP 400 + "location" | Provider rejects model | Skip all from that provider |
+| Timeout | Slow response | Set longer timeout with `timeout 180` |
+
+Try next model in the priority list. Usually the 1st or 2nd model works.
+
+## One-liner: find all free vision models on OpenRouter
+
+```bash
+curl -s "https://openrouter.ai/api/v1/models" | python3 -c "
+import json,sys
+for m in json.load(sys.stdin)['data']:
+    mid = m['id']
+    if ':free' in mid:
+        arch = m.get('architecture',{}).get('modality','')
+        keywords = ['vl','vision','omni','ocr','image']
+        if any(k in mid.lower() or k in arch.lower() for k in keywords):
+            print(mid)
+"
+```
 
 ## Usage Examples
 
 ```bash
-# Default prompt, auto-detected API key
+# Recommended: use top priority model
 node <SKILL_DIR>/vision.mjs \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   /tmp/screenshot.png
 
-# Custom prompt
+# Custom prompt in user's language
 node <SKILL_DIR>/vision.mjs \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   --prompt "这段代码有什么bug？" \
@@ -89,9 +106,7 @@ node <SKILL_DIR>/vision.mjs \
 
 ## API Key
 
-Script auto-detects the API key in this order:
+Script auto-detects the API key (no need to extract it yourself):
 1. `--api-key` CLI argument (override)
-2. `VISION_API_KEY` or `OPENROUTER_API_KEY` environment variable
-3. Pi's `~/.pi/agent/auth.json` (any of: openrouter, deepseek, kimi-coding)
-
-No need to extract the key yourself — just call the script.
+2. `VISION_API_KEY` or `OPENROUTER_API_KEY` env var
+3. Pi's `~/.pi/agent/auth.json` (openrouter → deepseek → kimi-coding)
