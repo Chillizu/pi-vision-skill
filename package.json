@@ -1,0 +1,14 @@
+{
+  "name": "pi-vision-skill",
+  "version": "1.0.0",
+  "description": "Pi skill — analyze images via free vision models on OpenRouter. Auto-detects Pi config, zero setup.",
+  "keywords": ["pi-package", "pi-skill"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chillizu/pi-vision-skill.git"
+  },
+  "pi": {
+    "skills": ["skills/*"]
+  }
+}
