@@ -34,19 +34,20 @@ for p in ('openrouter', 'deepseek', 'kimi-coding'):
 
 Read `~/.pi/agent/settings.json` → `enabledModels`.
 
-Example models that **support vision** (free):
-- `nvidia/nemotron-nano-12b-v2-vl:free` — ✅ most reliable
-- `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` — ⚠️ sometimes returns None
-- `openrouter/free` — ✅ free routing
-- `google/gemma-4-26b-a4b-it:free` — ⚠️ rate-limited/region-blocked
-- `google/gemma-4-31b-it:free` — ⚠️ rate-limited
-- `google/gemma-3-27b-it:free` — ❌ region-blocked (China)
-- `baidu/qianfan-ocr-fast:free` — ✅ OCR-specific
+Reference: free vision models on OpenRouter (all may or may not work depending on region/availability):
+- `nvidia/nemotron-nano-12b-v2-vl:free`
+- `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
+- `google/gemma-4-26b-a4b-it:free`
+- `google/gemma-4-31b-it:free`
+- `google/gemma-3-27b-it:free`
+- `baidu/qianfan-ocr-fast:free`
 
-**Paid models** (check the user before using):
-- `openai/gpt-4o` — vision capable, paid
-- `anthropic/claude-3.5-sonnet` — vision capable, paid
-- `google/gemini-pro-vision` — paid
+Paid models (check the user before using):
+- `openai/gpt-4o`
+- `anthropic/claude-3.5-sonnet`
+- `google/gemini-pro-vision`
+
+To check if a model is **free**: model ID ends with `:free`.
 
 ### 3. Decide which model to use
 
