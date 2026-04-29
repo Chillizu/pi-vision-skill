@@ -9,7 +9,7 @@ description: >
 
 # Vision Skill
 
-Enables Pi to "see" images. `vision.py` handles the API call + auto-detects
+Enables Pi to "see" images. `vision.mjs` handles the API call + auto-detects
 the API key from Pi's config — **the agent decides which model to use**.
 
 ## How to Use
@@ -54,7 +54,7 @@ To check if a model supports vision, you can:
 ### 3. Run the analysis
 
 ```bash
-python3 <SKILL_DIR>/vision.py --model <SELECTED_MODEL> <IMAGE_PATH_OR_URL>
+node <SKILL_DIR>/vision.mjs --model <SELECTED_MODEL> <IMAGE_PATH_OR_URL>
 ```
 
 - Use the user's language for the prompt (optional `--prompt "..."`)
@@ -71,25 +71,25 @@ python3 <SKILL_DIR>/vision.py --model <SELECTED_MODEL> <IMAGE_PATH_OR_URL>
 
 ```bash
 # Default prompt, auto-detected API key
-python3 <SKILL_DIR>/vision.py \
+node <SKILL_DIR>/vision.mjs \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   /tmp/screenshot.png
 
 # Custom prompt
-python3 <SKILL_DIR>/vision.py \
+node <SKILL_DIR>/vision.mjs \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   --prompt "这段代码有什么bug？" \
   /tmp/code.png
 
 # Image from URL
-python3 <SKILL_DIR>/vision.py \
+node <SKILL_DIR>/vision.mjs \
   --model nvidia/nemotron-nano-12b-v2-vl:free \
   https://example.com/diagram.png
 ```
 
 ## API Key
 
-vision.py auto-detects the API key in this order:
+Script auto-detects the API key in this order:
 1. `--api-key` CLI argument (override)
 2. `VISION_API_KEY` or `OPENROUTER_API_KEY` environment variable
 3. Pi's `~/.pi/agent/auth.json` (any of: openrouter, deepseek, kimi-coding)
