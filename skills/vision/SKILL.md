@@ -27,6 +27,19 @@ Look for model IDs containing **vision-related keywords** (in order of reliabili
 
 If any of Pi's enabled models match these keywords → use that model directly.
 
+**⚠️ Important:** Pi's settings.json stores model IDs with a `provider/` prefix (e.g.
+`"openrouter/nvidia/nemotron-nano-12b-v2-vl:free"`). **Strip the `openrouter/` prefix**
+before passing to vision.mjs — the script already sends requests to OpenRouter's API.
+
+Correct:
+```bash
+node vision.mjs --model nvidia/nemotron-nano-12b-v2-vl:free image.png
+```
+Wrong (causes HTTP 400):
+```bash
+node vision.mjs --model openrouter/nvidia/nemotron-nano-12b-v2-vl:free image.png
+```
+
 ### 2. Fallback: use the recommended list (priority order)
 
 If none of Pi's enabled models support vision, try these in **this exact order**.
@@ -39,9 +52,10 @@ Earlier models are more likely to work:
 | 3rd | `baidu/qianfan-ocr-fast:free` | Has `ocr` (image input) |
 | 4th | `google/gemma-4-26b-a4b-it:free` | May support images |
 | 5th | `google/gemma-4-31b-it:free` | May support images |
-| 6th | `google/gemma-3-27b-it:free` | May or may not support images |
+| 6th | `google/gemma-3-27b-it:free` | May support images |
 
-**Do not try models without vision keywords first** — they will waste a call and return null.
+**Do not deviate from this order.** Skip models that don't have vision keywords
+(`vl`, `vision`, `omni`, `ocr`). They will waste a call and return null.
 
 ### 3. Paid model guard
 
